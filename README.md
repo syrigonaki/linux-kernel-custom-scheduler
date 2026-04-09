@@ -17,7 +17,6 @@ Modified the core Linux scheduler (`kernel/sched.c`) to implement a prioritized 
 * **Execution Control:** Introduced `remaining_ct` (Completion Time) tracking. Tasks are automatically terminated via `do_exit()` once their allocated computation time is exhausted.
 
 ## Kernel Modifications
-The implementation involved modifying key areas of the kernel source tree:
 * **Process Management:** Modified `include/linux/sched.h` to expand `task_struct`.
 * **System Call Table:** Registered new syscalls in `arch/x86/kernel/syscall_table_32.S` and `unistd_32.h`.
 * **Scheduler Core:** Integrated custom logic into `schedule()` and `__sched_fork()`.
