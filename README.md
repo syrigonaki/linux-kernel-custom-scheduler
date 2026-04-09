@@ -1,87 +1,42 @@
-# Custom Linux Scheduler Policy
+# Linux Kernel Custom Scheduler & System Calls
 
-Implementation of a custom scheduling policy in the Linux 2.6.38.1 kernel, extending the default scheduler to support deadline-based tasks with controlled execution time.
+This project implements a custom deadline-based scheduling policy in the **Linux 2.6.38.1 kernel**. It extends the process descriptor (`task_struct`), introduces three new system calls for user-space interaction, and modifies the core scheduler logic to prioritize tasks based on custom scheduling scores.
 
-## Overview
+## Features
 
-This project modifies the Linux scheduler to prioritize custom tasks based on deadline-related parameters and terminate them once their computation time is exhausted.
+### 1. Custom Scheduling System Calls
+Added a specialized interface for user-space programs to communicate with the kernel:
+* **`set_scheduling_params`**: Configures deadline parameters ($d1, d2$) and computation time ($ct$).
+* **`get_scheduling_params`**: Safely retrieves parameters using `copy_to_user`.
+* **`get_scheduling_score`**: Computes the real-time scheduling priority of the process.
 
-Only tasks explicitly configured with custom scheduling parameters participate in the new policy. All other tasks fall back to the default Linux scheduler.
+### 2. Deadline-Based Scheduler Policy
+Modified the core Linux scheduler (`kernel/sched.c`) to implement a prioritized selection algorithm:
+* **Task Selection:** Implemented `pick_next_task_v2()`, which selects the task with the highest calculated scheduling value among custom tasks.
+* **Fall-back Mechanism:** If no custom tasks are active, the system seamlessly falls back to the default Linux scheduler.
+* **Execution Control:** Introduced `remaining_ct` (Completion Time) tracking. Tasks are automatically terminated via `do_exit()` once their allocated computation time is exhausted.
 
-## Implementation Details
+## Kernel Modifications
+The implementation involved modifying key areas of the kernel source tree:
+* **Process Management:** Modified `include/linux/sched.h` to expand `task_struct`.
+* **System Call Table:** Registered new syscalls in `arch/x86/kernel/syscall_table_32.S` and `unistd_32.h`.
+* **Scheduler Core:** Integrated custom logic into `schedule()` and `__sched_fork()`.
+* **Memory Safety:** Used `access_ok` and `copy_from_user` to ensure secure data transfer between kernel and user space.
 
-The following changes were made to the kernel:
-
-1. **Task Initialization**
-   - Default deadline values are set to `-1` for all existing tasks in `__sched_fork()`.
-   - Tasks with `deadline_1 != -1` are treated as custom-scheduled tasks.
-
-2. **Task Selection**
-   - Implemented a new `pick_next_task_v2()` function.
-   - Calculates a scheduling value for each custom task and selects the task with the greatest value.
-   - If no custom tasks are found, returns `NULL` and the default scheduler is used.
-
-3. **Scheduler Integration**
-   - When a custom task is selected:
-     - Its `vruntime` is set to `0`.
-     - The default `pick_next_task()` is invoked to finalize scheduling.
-
-4. **Completion Time Tracking**
-   - Introduced a new `task_struct` field: `remaining_ct`.
-   - Completion time is calculated as:
-     ```
-     x = now + remaining computation time
-     ```
-
-5. **Runtime Updates**
-   - `remaining_ct` is updated inside `schedule()` when the previous task is a custom task (`deadline_1 > -1`).
-
-6. **Task Termination**
-   - When `remaining_ct` reaches zero:
-     - The task is marked for termination (`tsk->to_kill = 1`).
-     - The task is terminated via `do_exit()`.
-
-7. **Cleanup**
-   - `do_exit()` triggers one final `schedule()`.
-   - The task is marked as dead in `finish_switch_task()` after the context switch.
-
-## Prebuilt Kernel Image
-
-A prebuilt kernel image (`bzImage`) is included in the repository.
-
-This image was compiled from the modified Linux 2.6.38.1 kernel sources and already contains:
-- The custom scheduling policy
-- The extended `task_struct` fields
-- All related scheduler and system call modifications
-
-This allows the kernel to be booted directly (e.g. in QEMU) without recompiling the kernel.
-
-## Known Issues
-
-* `remaining_ct` is measured in nanoseconds but decreases much more slowly than expected.
-* As a workaround during testing, tasks were terminated when remaining_ct <= ~1.98 seconds (≈ 1,980,000,000 ns) instead of `0`, to avoid excessively long runtimes.
+## Repository Structure
+* **/linux-2.6.38.1**: Contains the specific modified source files in their correct directory structure.
+* **/test_programs**: C programs and Makefiles to validate syscalls and scheduler behavior.
+* **bzImage**: A prebuilt, compiled kernel image ready for booting in QEMU.
 
 ## Testing
-
-Two user-space test programs are provided to validate the scheduler behavior.
+User-space test programs are included to validate the behavior of the new system calls and the scheduler's prioritization.
 
 ### Compilation
-
 ```bash
 make all
 ```
 
-Remove the executable using:
+##  Technical Challenges & Observations
 
-```bash
-make clean
-```
-
-## Notes
-
-*Kernel modifications are located inside the Linux 2.6.38.1 source tree.
-*Only the files modified for this project are included in the repository, in their correct directory structure.
-
-
-
-
+* **Clock Frequency & Timing Precision:** Tthe `remaining_ct` (measured in nanoseconds) decremented at a slower rate than the wall-clock time. 
+* **Workaround:** To ensure consistent task termination during evaluation, the scheduler was configured to trigger `do_exit()` when `remaining_ct` reached a threshold (≈ 1.98s) rather than absolute zero. This suggests a scaling discrepancy between the guest kernel's Jiffies and the host hardware's high-resolution timers.
